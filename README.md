@@ -1,3 +1,5 @@
+> **M2 reflection features (Rashad):** Start with [m2/README.md](m2/README.md) for setup, scan visualization, feature extraction and the three-day plan. The older format and gait descriptions below are historical; see the newer validation reports for corrections.
+
 # ACSAR-E M1 — Dataset Preparation Workspace
 
 **Project:** ACSAR-E — Gait-Aware LiDAR Reflection Confidence for Glass Surfaces  

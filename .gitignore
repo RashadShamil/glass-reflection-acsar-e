@@ -6,3 +6,7 @@ __pycache__/
 # Reproducible M2 output; keep selected illustrations explicitly elsewhere
 /m2/results/
 /m2/results-*/
+
+# Continuous interval extracts and local environment reports
+/m2/intervals/
+/m2-environment.txt

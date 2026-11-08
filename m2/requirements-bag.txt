@@ -1,0 +1,3 @@
+-r requirements.txt
+# Pure Python ROS message deserialization; ROS installation is not required.
+rosbags>=0.10,<0.12

@@ -72,3 +72,72 @@ This is a first feature extraction deliverable. It does not complete glass class
 ## Which upstream documents to trust
 
 Read the newer `gait_validation_report.md`, `calibration_validation.md`, `time_alignment_validation.md` and `ground_truth_requirements.md` for current caveats. Older main/handoff READMEs retain obsolete matrix formats, removed gait paths and stronger glass/synchronization claims. Use structured-array loading with `allow_pickle=False`. Corrected gait data lives in `exports/lowstate_validated.npz` and `exports/sportmode_validated.npz`; this program does not consume it. The accumulated stationary XYZ clouds discard per-record provenance and are not inputs here.
+
+
+## Continuous bag pilot (PowerShell, no ROS installation)
+
+The original ROS bag stays read-only. Use Python 3.10+ and install the optional
+bag dependencies in the same environment used for the analyser:
+
+```powershell
+python -m pip install -r m2/requirements-bag.txt
+$bag = "C:\Users\shami\OneDrive\Desktop\Ascar-E\new3\rosbag2_2026_10_01-16_49_33"
+python m2/export_interval.py --bag "$bag" --start-s 5 --duration-s 5 --out m2/intervals/l1_5_10
+```
+
+All commands in this section are single-line PowerShell commands. Selection is
+[5,10) recorder seconds after the first `/utlidar/cloud` receipt, not five
+seconds after a sensor header timestamp. The reference is the same for optional
+Hesai exports; this is only a common recording-time window, not synchronization.
+This pilot supports one uncompressed `.db3` file. It refuses existing output
+folders; use a new output path after a failed/previous attempt.
+
+The exporter uses the Rosbags Foxy standard PointCloud2 deserializer and the
+message's own field offsets/counts, endianness and row stride. It retains native
+fields, invalid records, header and receipt nanoseconds, source SQLite message ID,
+source database name, full original serialized CDR and original point payload.
+Original point index is row*width+column. `bag_msg_index` is the zero-based topic
+ordinal sorted by receipt timestamp then SQLite ID; it is not a hardware scan ID.
+The original SQLite ID is the authoritative source-record locator.
+
+Read `m2/intervals/l1_5_10/reports/interval.json` before analysing: it reports
+receipt/header gaps in receipt order and the distances from requested interval
+boundaries to first/last selected messages. A count of gaps over 200 ms is only a
+diagnostic, not a validated rejection threshold. Nonpositive header gaps require
+investigation. Similar header and receipt gaps are evidence to inspect, not proof
+of data loss. Do not change timestamps or fill gaps to force continuity.
+
+```powershell
+Get-Content m2/intervals/l1_5_10/reports/interval.json
+python m2/analyze_scans.py --repo m2/intervals/l1_5_10 --out m2/results-pilot --no-plots --no-csv
+python m2/summarize_interval.py --interval m2/intervals/l1_5_10 --results m2/results-pilot
+Invoke-Item "m2/results-pilot/timeline.png"
+```
+
+This exports authoritative `features.npz` for every selected scan without the
+cost of a PNG and large per-point CSV per scan. `scan_summary.csv` and
+`timeline.png` summarize score quantiles, coverage, range jumps and header/receipt
+gaps. These are single-scan features plotted over time; no physical point tracking,
+deskew, gait association, material labels or cross-sensor fusion is performed.
+Scan-wide intensity normalization changes with scene content, so distribution
+changes alone do not establish a causal motion effect.
+
+To inspect the first three pilot clouds visually, use another output directory:
+
+```powershell
+python m2/analyze_scans.py --repo m2/intervals/l1_5_10 --limit 3 --out m2/results-pilot-preview
+```
+
+For an independent Hesai pilot in the same recorder window:
+
+```powershell
+python m2/export_interval.py --bag "$bag" --topic /lidar_points --start-s 5 --duration-s 5 --out m2/intervals/hesai_5_10
+```
+
+Interval tests use synthetic serialized PointCloud2 messages in SQLite and verify
+half-open window bounds, exact byte/field preservation, row padding, big endian
+payloads, source IDs, immutable source database and end-to-end analysis/summary.
+They do not replace running the actual robot bag locally. The earlier baseline
+software checks remain available via `python -m unittest discover -s m2 -p "test_*.py"`.
+
+Rosbags type-store documentation: https://ternaris.gitlab.io/rosbags/api/rosbags.typesys.html

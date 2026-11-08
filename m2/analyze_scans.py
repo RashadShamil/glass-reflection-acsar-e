@@ -135,12 +135,16 @@ def main():
     parser.add_argument('--sensor', choices=['all', 'l1_raw', 'hesai'], default='all')
     parser.add_argument('--limit', type=int)
     parser.add_argument('--inspect-only', action='store_true')
+    parser.add_argument('--no-plots', action='store_true', help='Export features without per-scan PNGs')
+    parser.add_argument('--no-csv', action='store_true', help='Export authoritative NPZ only; omit large per-point CSVs')
     parser.add_argument('--candidate-pairs', action='store_true')
     parser.add_argument('--angle-deg', type=float, default=1.0)
     parser.add_argument('--radius-m', type=float, default=0.5)
     args = parser.parse_args()
     if not 0 < args.angle_deg < 180 or args.radius_m <= 0 or (args.limit is not None and args.limit <= 0):
         parser.error('Require positive radius/limit and an angle between 0 and 180')
+    if (args.repo / 'INCOMPLETE').exists():
+        parser.error('Interval export is incomplete; inspect exporter error before analysing')
     with (args.repo / 'reports/scan_index.csv').open(newline='') as stream:
         rows = [r for r in csv.DictReader(stream) if r['export_subdir'] in ('l1_raw', 'hesai')
                 and (args.sensor == 'all' or r['export_subdir'] == args.sensor)]
@@ -151,6 +155,9 @@ def main():
     summaries = []
     for row in rows:
         source = args.repo / 'exports' / row['export_subdir'] / row['export_file']
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if row.get('sha256') and row['sha256'] != digest:
+            raise ValueError('Source hash differs from interval manifest: ' + str(source))
         raw, xyz, valid = load_scan(source)
         for key in ['header_stamp_ns', 'bag_receipt_ns', 'bag_msg_index']:
             if int(raw[key]) != int(row[key]):
@@ -158,7 +165,7 @@ def main():
         if len(xyz) != int(row['point_count']):
             raise ValueError('Index point count mismatch: ' + str(source))
         summary = {'source': str(source.relative_to(args.repo)),
-                   'sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+                   'sha256': digest,
                    'records': len(xyz), 'valid_records': int(valid.sum()),
                    'frame': raw['frame_id'].item().decode(),
                    'header_stamp_ns': int(raw['header_stamp_ns']),
@@ -168,19 +175,24 @@ def main():
             result = features(raw['points'], xyz, valid, args.angle_deg, args.radius_m, args.candidate_pairs)
             dest = args.out / (row['export_subdir'] + '__' + source.stem)
             dest.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(dest / 'features.npz', **raw, **result,
-                                source_bag_name=np.array(row['bag_name']), source_topic=np.array(row['topic']),
-                                source_sha256=np.array(summary['sha256']))
+            output = dict(raw)
+            output.update(result)
+            output.update(source_bag_name=np.array(row['bag_name']),
+                          source_topic=np.array(row['topic']),
+                          source_sha256=np.array(summary['sha256']))
+            np.savez_compressed(dest / 'features.npz', **output)
             names = list(raw['points'].dtype.names) + list(result)
-            with (dest / 'observations.csv').open('w', newline='') as stream:
-                writer = csv.writer(stream)
-                writer.writerow(['observation_id', 'header_stamp_ns', 'bag_receipt_ns', 'valid'] + names)
-                for i in range(len(xyz)):
-                    oid = '{}:{}:{}:{}'.format(row['bag_name'], row['topic'], row['bag_msg_index'], i)
-                    writer.writerow([oid, summary['header_stamp_ns'], summary['bag_receipt_ns'], bool(valid[i])]
-                                    + [raw['points'][name][i].item() for name in raw['points'].dtype.names]
-                                    + [result[name][i].item() for name in result])
-            plot_scan(dest / 'scan.png', raw['points'], xyz, valid, result)
+            if not args.no_csv:
+                with (dest / 'observations.csv').open('w', newline='') as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(['observation_id', 'header_stamp_ns', 'bag_receipt_ns', 'valid'] + names)
+                    for i in range(len(xyz)):
+                        oid = '{}:{}:{}:{}'.format(row['bag_name'], row['topic'], row['bag_msg_index'], i)
+                        writer.writerow([oid, summary['header_stamp_ns'], summary['bag_receipt_ns'], bool(valid[i])]
+                                        + [raw['points'][name][i].tolist() for name in raw['points'].dtype.names]
+                                        + [result[name][i].item() for name in result])
+            if not args.no_plots:
+                plot_scan(dest / 'scan.png', raw['points'], xyz, valid, result)
             summary['candidate_pairs'] = int((result['candidate_partner_index'] >= 0).sum() // 2)
             summary['scored_records'] = int(np.isfinite(result['anomaly_score']).sum())
         summaries.append(summary)
